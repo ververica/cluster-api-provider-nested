@@ -15,7 +15,6 @@
 # limitations under the License.
 
 readonly VC_GO_PACKAGE=sigs.k8s.io/cluster-api-provider-nested/virtualcluster
-
 readonly VC_ALL_TARGETS=(
   cmd/manager
   cmd/syncer
@@ -24,15 +23,15 @@ readonly VC_ALL_TARGETS=(
 )
 readonly VC_ALL_BINARIES=("${VC_ALL_TARGETS[@]##*/}")
 
-# binaries_from_targets take a list of build targets and return the
-# full go package to be built
+# Define supported OS and architecture combinations
+#SUPPORTED_PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
+SUPPORTED_PLATFORMS=("darwin/arm64")
+
+# binaries_from_targets function
 binaries_from_targets() {
   local target
   for target; do
-    # If the target starts with what looks like a domain name, assume it has a
-    # fully-qualified package name rather than one that needs the Kubernetes
-    # package prepended.
-    if [[ "${target}" =~ ^([[:alnum:]]+".")+[[:alnum:]]+"/" ]]; then
+    if [[ "${target}" =~ ^([[:alnum:]]+\.)+[[:alnum:]]+/ ]]; then
       echo "${target}"
     else
       echo "${VC_GO_PACKAGE}/${target}"
@@ -40,26 +39,16 @@ binaries_from_targets() {
   done
 }
 
+# version function
 version() {
-  # GIT_COMMIT is used for daemon GitCommit in go build.
   GIT_COMMIT=$(git rev-parse HEAD)
-
-  # BUILD_DATE is used for daemon BuildTime in go build.
   BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-
   GIT_VERSION="v1.0.0"
-
   VERSION_PKG=sigs.k8s.io/cluster-api-provider-nested/virtualcluster/pkg/version
-  echo "-X ${VERSION_PKG}.gitVersion=${GIT_VERSION}"
-  echo "-X ${VERSION_PKG}.gitCommit=${GIT_COMMIT}"
-  echo "-X ${VERSION_PKG}.buildDate=${BUILD_DATE}"
+  echo "-X ${VERSION_PKG}.gitVersion=${GIT_VERSION} -X ${VERSION_PKG}.gitCommit=${GIT_COMMIT} -X ${VERSION_PKG}.buildDate=${BUILD_DATE}"
 }
 
-# Build binaries targets specified
-#
-# Input:
-#   $@ - targets and go flags.  If no targets are set then all binaries targets
-#     are built.
+# build_binaries function with multi-arch support
 build_binaries() {
   local goflags goldflags gcflags
   goldflags="${GOLDFLAGS:-} -s -w $(version)"
@@ -71,7 +60,6 @@ build_binaries() {
 
   for arg; do
     if [[ "${arg}" == -* ]]; then
-      # Assume arguments starting with a dash are flags to pass to go.
       goflags+=("${arg}")
     else
       targets+=("${arg}")
@@ -85,10 +73,19 @@ build_binaries() {
   local -a binaries
   while IFS="" read -r binary; do binaries+=("$binary"); done < <(binaries_from_targets "${targets[@]}")
 
-  mkdir -p ${VC_BIN_DIR}
-  cd ${VC_BIN_DIR}
-  for binary in "${binaries[@]}"; do
-    echo "Building ${binary}"
-    GOOS=${GOOS:-linux} go build -ldflags "${goldflags:-}" -gcflags "${gcflags:-}" ${goflags} ${binary}
+  mkdir -p "${VC_BIN_DIR}"
+  cd "${VC_BIN_DIR}"
+  for platform in "${SUPPORTED_PLATFORMS[@]}"; do
+    OS="${platform%/*}"
+    ARCH="${platform#*/}"
+
+    for binary in "${binaries[@]}"; do
+      BIN_OUTPUT="$(basename "${binary}")-${OS}-${ARCH}"
+      echo "Building ${binary} for ${OS}/${ARCH} -> ${BIN_OUTPUT}"
+      GOOS=${OS} GOARCH=${ARCH} go build -o "${BIN_OUTPUT}" -ldflags "${goldflags}" -gcflags "${gcflags}" ${goflags} "${binary}"
+    done
   done
 }
+
+# Call build_binaries function
+build_binaries "$@"

@@ -17,7 +17,12 @@
 # Get the set of binaries that run in Docker (on Linux)
 # Entry format is "<name-of-binary>,<base-image>".
 # Binaries are placed in /usr/local/bin inside the image.
-#
+
+
+# Define supported OS and architecture combinations
+SUPPORTED_PLATFORMS=("linux/amd64" "linux/arm64")
+
+
 # $1 - server architecture
 get_docker_wrapped_binaries() {
   local arch=$1
@@ -69,6 +74,8 @@ create_docker_image() {
     local docker_build_path="${binary_dir}/${binary_name}.dockerbuild"
     local docker_file_path="${docker_build_path}/Dockerfile"
     local binary_file_path="${binary_dir}/${binary_name}"
+    echo "docker_file_path: ${docker_file_path} "
+    echo "binary_file_path: ${binary_file_path} "
     local docker_image_tag="${VC_DOCKER_REGISTRY}/${binary_name}-${arch}:latest"
 
     echo "Starting docker build for image: ${binary_name}-${arch}"
@@ -81,7 +88,7 @@ FROM ${base_image}
 COPY ${binary_name} /usr/local/bin/${binary_name}
 ${image_user}
 EOF
-      "${DOCKER[@]}" build -q -t "${docker_image_tag}" "${docker_build_path}" >/dev/null
+      "${DOCKER[@]}" buildx build --platform linux/amd64,linux/arm64 -t "${docker_image_tag}" "${docker_build_path}" >/dev/null
     ) &
   done
 
@@ -91,22 +98,45 @@ EOF
 
 # Package up all of the binaries in docker images
 build_images() {
-  # Clean out any old images
+  # Clean out any old images and prepare the release directory
   rm -rf "${VC_RELEASE_DIR}"
   mkdir -p "${VC_RELEASE_DIR}"
-  cd ${VC_BIN_DIR}
-  local targets=()
 
-  for arg; do
-    targets+=(${arg##*/})
-  done
-  echo "${targets[@]-}"
-  
+  # Determine targets: Use specified targets or fall back to all binaries
+  local targets=("${@}")
   if [ ${#targets[@]} -eq 0 ]; then
-    cp "${VC_ALL_BINARIES[@]/#/}" ${VC_RELEASE_DIR}
+    targets=("${VC_ALL_BINARIES[@]}")
   else
-    cp ${targets[@]} ${VC_RELEASE_DIR}
+    # Remove path components, keeping only the binary names
+    targets=("${targets[@]##*/}")
   fi
 
-  create_docker_image "${VC_RELEASE_DIR}" "amd64" "${targets[@]-}"
+  echo "Building images for targets: ${targets[@]}"
+
+  # Loop through each target and platform combination
+  for binary in "${targets[@]}"; do
+    for platform in "${SUPPORTED_PLATFORMS[@]}"; do
+      local os="${platform%/*}"
+      local arch="${platform#*/}"
+      local binary_name="${binary}-${os}-${arch}"
+      local binary_path="${VC_BIN_DIR}/${binary_name}"
+
+      # Ensure binary exists before copying and creating the image
+      if [ ! -f "${binary_path}" ]; then
+        echo "Warning: Binary ${binary_path} not found, skipping..."
+        continue
+      fi
+
+      # Copy the binary to the release directory
+      cp "${binary_path}" "${VC_RELEASE_DIR}/"
+      echo "Copied ${binary_name} to ${VC_RELEASE_DIR}"
+
+      # Build Docker image for the current binary and platform
+      echo "Building Docker image for ${binary_name} on ${platform}"
+      create_docker_image "${VC_RELEASE_DIR}" "${arch}" "${binary_name}"
+    done
+  done
+
+  echo "All specified Docker images built successfully."
 }
+

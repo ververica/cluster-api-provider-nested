@@ -25,7 +25,7 @@ readonly VC_ALL_BINARIES=("${VC_ALL_TARGETS[@]##*/}")
 
 # Define supported OS and architecture combinations
 #SUPPORTED_PLATFORMS=("linux/amd64" "linux/arm64" "darwin/amd64" "darwin/arm64")
-SUPPORTED_PLATFORMS=("darwin/arm64")
+SUPPORTED_PLATFORMS=("linux/amd64" "linux/arm64")
 
 # binaries_from_targets function
 binaries_from_targets() {
